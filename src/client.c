@@ -1,37 +1,69 @@
-#include "unp.h"
+/*
+** talker.c -- a datagram "client" demo
+*/
 
-int main(int argc, char **argv)
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+
+
+/*
+Call with: IP PORT MESSAGE
+*/
+int main(int argc, char *argv[])
 {
-    int     sockfd;
-    struct sockaddr_in servaddr;
+    int sockfd;
+    struct addrinfo hints, *servinfo, *p;
+    int rv;
+    int numbytes;
 
-    if (argc != 3)
-        err_quit("usage: udpcli <IPaddress> <ClientPort> <ServerPort>");
-
-    bzero(&servaddr, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_port = htons(SERV_PORT);
-    Inet_pton(AF_INET, argv[1], &servaddr.sin_addr);
-
-    sockfd = Socket(AF_INET, SOCK_DGRAM, 0);
-
-    dg_cli(stdin, sockfd, (SA *) &servaddr, sizeof(servaddr));
-
-    exit(0);
-}
-
-void dg_cli(FILE *fp, int sockfd, const SA *pservaddr, socklen_t servlen)
-{
-    int     n;
-    char    sendline[MAXLINE], recvline[MAXLINE + 1];
-
-    while (Fgets(sendline, MAXLINE, fp) != NULL) {
-
-        Sendto(sockfd, sendline, strlen(sendline), 0, pservaddr, servlen);
-
-        n = Recvfrom(sockfd, recvline, MAXLINE, 0, NULL, NULL);
-
-        recvline[n] = 0;
-        Fputs(recvline, stdout);
+    if (argc != 4) {
+        fprintf(stderr,"usage: talker hostname message\n");
+        exit(1);
     }
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    if ((rv = getaddrinfo(argv[1], argv[2], &hints, &servinfo)) != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+        return 1;
+    }
+
+    // loop through all the results and make a socket
+    for(p = servinfo; p != NULL; p = p->ai_next) {
+        if ((sockfd = socket(p->ai_family, p->ai_socktype,
+                p->ai_protocol)) == -1) {
+            perror("talker: socket");
+            continue;
+        }
+
+        break;
+    }
+
+    if (p == NULL) {
+        fprintf(stderr, "talker: failed to bind socket\n");
+        return 2;
+    }
+
+    if ((numbytes = sendto(sockfd, argv[3], strlen(argv[3]), 0,
+             p->ai_addr, p->ai_addrlen)) == -1) {
+        perror("talker: sendto");
+        exit(1);
+    }
+
+    freeaddrinfo(servinfo);
+
+    printf("talker: sent %d bytes to %s\n", numbytes, argv[1]);
+    close(sockfd);
+
+    return 0;
 }

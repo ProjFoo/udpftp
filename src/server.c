@@ -1,33 +1,95 @@
-#include "unp.h"
+/*
+** listener.c -- a datagram sockets "server" demo
+*/
 
-int
-main(int argc, char **argv)
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+
+#define MAXBUFLEN 100
+
+/*
+Call with: PORT
+*/
+void *get_in_addr(struct sockaddr *sa)
 {
-    int     sockfd;
-    struct sockaddr_in servaddr, cliaddr;
+    if (sa->sa_family == AF_INET) {
+        return &(((struct sockaddr_in*)sa)->sin_addr);
+    }
 
-    sockfd = Socket(AF_INET, SOCK_DGRAM, 0);
-
-    bzero(&servaddr, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    servaddr.sin_port = htons(SERV_PORT);
-
-    Bind(sockfd, (SA *) &servaddr, sizeof(servaddr));
-
-    dg_echo(sockfd, (SA *) &cliaddr, sizeof(cliaddr));
+    return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-void dg_echo(int sockfd, SA *pcliaddr, socklen_t clilen)
+int main(int argc, char *argv[])
 {
-    int     n;
-    socklen_t len;
-    char    mesg[MAXLINE];
+    int sockfd;
+    struct addrinfo hints, *servinfo, *p;
+    int rv;
+    int numbytes;
+    struct sockaddr_storage their_addr;
+    char buf[MAXBUFLEN];
+    socklen_t addr_len;
+    char s[INET6_ADDRSTRLEN];
 
-    for( ; ; ){
-        len = clilen;
-        n = Recvfrom(sockfd, mesg, MAXLINE, 0, pcliaddr, &len);
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC; // set to AF_INET to force IPv4
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_PASSIVE; // use my IP
 
-        Sendto(sockfd, mesg, n, 0, pcliaddr, len);
+    if ((rv = getaddrinfo(NULL, argv[1], &hints, &servinfo)) != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+        return 1;
     }
+
+    // loop through all the results and bind to the first we can
+    for(p = servinfo; p != NULL; p = p->ai_next) {
+        if ((sockfd = socket(p->ai_family, p->ai_socktype,
+                p->ai_protocol)) == -1) {
+            perror("listener: socket");
+            continue;
+        }
+
+        if (bind(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+            close(sockfd);
+            perror("listener: bind");
+            continue;
+        }
+
+        break;
+    }
+
+    if (p == NULL) {
+        fprintf(stderr, "listener: failed to bind socket\n");
+        return 2;
+    }
+
+    freeaddrinfo(servinfo);
+
+    printf("listener: waiting to recvfrom...\n");
+
+    addr_len = sizeof their_addr;
+    if ((numbytes = recvfrom(sockfd, buf, MAXBUFLEN-1 , 0,
+        (struct sockaddr *)&their_addr, &addr_len)) == -1) {
+        perror("recvfrom");
+        exit(1);
+    }
+
+    printf("listener: got packet from %s\n",
+        inet_ntop(their_addr.ss_family,
+            get_in_addr((struct sockaddr *)&their_addr),
+            s, sizeof s));
+    printf("listener: packet is %d bytes long\n", numbytes);
+    buf[numbytes] = '\0';
+    printf("listener: packet contains \"%s\"\n", buf);
+
+    close(sockfd);
+
+    return 0;
 }
